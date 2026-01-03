@@ -167,6 +167,9 @@ public class AuthContainerView extends LinearLayout
     // HAT received from LockSettingsService when credential is verified.
     @Nullable private byte[] mCredentialAttestation;
 
+    private View mHbmView;
+    private boolean mIsHbmShowing;
+
     // TODO(b/313469218): remove when legacy prompt is replaced
     @Deprecated
     static class Config {
@@ -206,6 +209,7 @@ public class AuthContainerView extends LinearLayout
         public void onButtonTryAgain() {
             mFailedModalities.clear();
             mConfig.mCallback.onTryAgainPressed(getRequestId());
+            addDimView();
         }
 
         @Override
@@ -569,6 +573,8 @@ public class AuthContainerView extends LinearLayout
             ComposeInitializer.INSTANCE.onDetachedFromWindow(this);
         }
         mWakefulnessLifecycle.removeObserver(this);
+
+        removeDimView();
     }
 
     @Override
@@ -622,6 +628,7 @@ public class AuthContainerView extends LinearLayout
         } else {
             Log.e(TAG, "onAuthenticationFailed(): mBiometricView is null");
         }
+        removeDimView();
     }
 
     public void onHelp(@Modality int modality, String help) {
@@ -638,6 +645,7 @@ public class AuthContainerView extends LinearLayout
         } else {
             Log.e(TAG, "onError(): mBiometricView is null");
         }
+        removeDimView();
     }
 
     public void onPointerDown() {
@@ -646,6 +654,7 @@ public class AuthContainerView extends LinearLayout
                 Log.d(TAG, "retrying failed modalities (pointer down)");
                 mFailedModalities.remove(TYPE_FACE);
                 mBiometricCallback.onButtonTryAgain();
+                addDimView();
             }
         } else {
             Log.e(TAG, "onPointerDown(): mBiometricView is null");
@@ -688,6 +697,8 @@ public class AuthContainerView extends LinearLayout
             return;
         }
         mContainerState = STATE_ANIMATING_OUT;
+
+        removeDimView();
 
         // Request hiding soft-keyboard before animating away credential UI, in case IME insets
         // animation get delayed by dismissing animation.
@@ -770,6 +781,8 @@ public class AuthContainerView extends LinearLayout
             mConfig.mCallback.onDialogAnimatedIn(getRequestId(), !delayFingerprint);
             mBiometricView.onDialogAnimatedIn(!delayFingerprint);
         }
+
+        addDimView();
     }
 
     public PromptViewModel getViewModel() {
@@ -808,5 +821,68 @@ public class AuthContainerView extends LinearLayout
         if (mConfig != null) {
             pw.println("    config.sensorIds exist=" + (mConfig.mSensorIds != null));
         }
+    }
+
+    private void addDimView() {
+        if (mIsHbmShowing) {
+            return;
+        }
+
+        View iconView = mLayout.findViewById(R.id.biometric_icon);
+        if (iconView == null) {
+            iconView = mLayout.findViewWithTag("biometric_icon");
+        }
+
+        if (iconView == null || !iconView.isAttachedToWindow()) {
+            Log.w(TAG, "addDimView: Icon not found or not attached, skipping HBM.");
+            return;
+        }
+
+        mHbmView = new View(mContext);
+        mHbmView.setBackgroundResource(R.drawable.udfps_icon_pressed);
+
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+            WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_PANEL,
+            0 /* flags set in computeLayoutParams() */,
+            PixelFormat.TRANSLUCENT
+        );
+
+        lp.setTitle("OnScreenFingerprintAuthBpLayer");
+        lp.setFitInsetsTypes(0);
+
+        int[] location = new int[2];
+        iconView.getLocationOnScreen(location);
+
+        int padding = 20;
+
+        lp.x = location[0] - padding;
+        lp.y = location[1] - padding;
+        lp.width = iconView.getWidth() + (padding * 2);
+        lp.height = iconView.getHeight() + (padding * 2);
+
+        lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+        lp.flags = 25166120;
+        lp.systemUiVisibility = 0x1202;
+        lp.gravity = android.view.Gravity.TOP | android.view.Gravity.LEFT;
+
+        Log.i(TAG, "addDimView mParams.x: " + lp.x + " mParams.y " + lp.y +
+              " mParams.width:" + lp.width + " mParams.height:" + lp.height);
+
+        mWindowManager.addView(mHbmView, lp);
+        mIsHbmShowing = true;
+    }
+
+    private void removeDimView() {
+        if (!mIsHbmShowing || mHbmView == null) {
+            return;
+        }
+        try {
+            mWindowManager.removeView(mHbmView);
+        } catch (IllegalArgumentException e) {
+            // View might already be detached
+            Log.w(TAG, "Failed to remove dim view: " + e.getMessage());
+        }
+        mIsHbmShowing = false;
+        mHbmView = null;
     }
 }

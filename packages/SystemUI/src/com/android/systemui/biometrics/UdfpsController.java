@@ -73,6 +73,7 @@ import com.android.keyguard.UserActivityNotifier;
 import com.android.systemui.Dumpable;
 import com.android.systemui.Flags;
 import com.android.systemui.animation.ActivityTransitionAnimator;
+import com.android.systemui.biometrics.PriUdfpsScrimController;
 import com.android.systemui.biometrics.dagger.BiometricsBackground;
 import com.android.systemui.biometrics.domain.interactor.UdfpsOverlayInteractor;
 import com.android.systemui.biometrics.shared.model.UdfpsOverlayParams;
@@ -847,6 +848,16 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             if (oldView != null) {
                 onFingerUp(mOverlay.getRequestId(), oldView);
             }
+
+            // Ensure HBM views are removed from WindowManager
+            // Note: UdfpsControllerOverlay.hide() in your previous Kotlin file
+            // handles the actual window removal, so this might be redundant
+            // depending on implementation, but standard vendor logic resets visibility here.
+            View hbmView = mOverlay.getHbmView();
+            if (hbmView != null) {
+                hbmView.setVisibility(View.GONE);
+            }
+
             final boolean removed = mOverlay.hide();
             mKeyguardViewManager.hideAlternateBouncer(true);
             Log.v(TAG, "hideUdfpsOverlay | removing window: " + removed);
@@ -1063,6 +1074,33 @@ public class UdfpsController implements DozeReceiver, Dumpable {
         mOnFingerDown = true;
         mFingerprintManager.onPointerDown(requestId, mSensorProps.sensorId, pointerId, x, y,
                 minor, major, orientation, time, gestureStart, isAod);
+
+        if (mOverlay != null) {
+            View hbmView = mOverlay.getHbmView(); // Ensure UdfpsControllerOverlay exposes this
+            WindowManager.LayoutParams hbmParams = mOverlay.getHbmLayoutParamsFull();
+
+            if (hbmView != null && hbmParams != null) {
+                // 1. Calculate Alpha
+                int brightness = PriUdfpsScrimController.getInstance().getSystemBrightness(mContext);
+                float alpha = PriUdfpsScrimController.calculateAlpha(brightness);
+
+                // Debug Log to verify values
+                Log.d(TAG, "UDFPS Scrim: Brightness=" + brightness + " CalculatedAlpha=" + alpha);
+
+                // 2. Force visibility FIRST
+                if (hbmView.getVisibility() != View.VISIBLE) {
+                    hbmView.setVisibility(View.VISIBLE);
+                }
+
+                // 3. Update Layout Params if alpha changed
+                // We assume the view was added with hbmParams. If not, this update is ignored.
+                if (Math.abs(hbmParams.alpha - alpha) > 0.001f) {
+                    hbmParams.alpha = alpha;
+                    mWindowManager.updateViewLayout(hbmView, hbmParams);
+                }
+            }
+        }
+
         Trace.endAsyncSection("UdfpsController.e2e.onPointerDown", 0);
 
         final View view = mOverlay.getTouchOverlay();
@@ -1121,6 +1159,14 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             }
         }
         mOnFingerDown = false;
+
+        if (mOverlay != null) {
+            View hbmView = mOverlay.getHbmView();
+            if (hbmView != null) {
+                hbmView.setVisibility(View.GONE);
+            }
+        }
+
         unconfigureDisplay(view);
         cancelAodSendFingerUpAction();
     }

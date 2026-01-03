@@ -19,6 +19,7 @@ package com.android.systemui.biometrics
 import android.annotation.SuppressLint
 import android.annotation.UiThread
 import android.content.Context
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.hardware.biometrics.BiometricRequestConstants.REASON_AUTH_BP
@@ -54,6 +55,7 @@ import com.android.systemui.power.domain.interactor.PowerInteractor
 import com.android.systemui.res.R
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
 import com.android.systemui.statusbar.policy.KeyguardStateController
+import com.android.systemui.statusbar.policy.KeyguardStateControllerImpl
 import dagger.Lazy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -109,6 +111,13 @@ constructor(
         return overlayTouchView
     }
 
+    val hbmView: View = View(context)
+    val dimView: View = View(context)
+    val hbmLayoutParams: WindowManager.LayoutParams
+    val hbmLayoutParamsFull:WindowManager.LayoutParams
+    val dimLayoutParams: WindowManager.LayoutParams
+    var isAddDimView: Boolean = false
+
     private var overlayParams: UdfpsOverlayParams = UdfpsOverlayParams()
     private var sensorBounds: Rect = Rect()
 
@@ -124,26 +133,8 @@ constructor(
         null
     }
 
-    private val coreLayoutParams =
-        WindowManager.LayoutParams(
-                WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_PANEL,
-                0 /* flags set in computeLayoutParams() */,
-                PixelFormat.TRANSLUCENT,
-            )
-            .apply {
-                title = TAG
-                fitInsetsTypes = 0
-                gravity = android.view.Gravity.TOP or android.view.Gravity.LEFT
-                layoutInDisplayCutoutMode =
-                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-                flags = Utils.FINGERPRINT_OVERLAY_LAYOUT_PARAM_FLAGS
-                privateFlags =
-                    WindowManager.LayoutParams.PRIVATE_FLAG_TRUSTED_OVERLAY or
-                        WindowManager.LayoutParams.PRIVATE_FLAG_EXCLUDE_FROM_SCREEN_MAGNIFICATION
-                // Avoid announcing window title.
-                accessibilityTitle = " "
-                inputFeatures = WindowManager.LayoutParams.INPUT_FEATURE_SPY
-            }
+    val coreLayoutParams: WindowManager.LayoutParams
+    var touchExplorationEnabled: Boolean = false
 
     /** If the overlay is currently showing. */
     val isShowing: Boolean
@@ -153,7 +144,95 @@ constructor(
     val isHiding: Boolean
         get() = getTouchOverlay() == null
 
-    private var touchExplorationEnabled = false
+    init {
+        val vendorFlags = 25166120 // TODO: Actually set the flags, not just the smali value
+
+        hbmView.setBackgroundColor(Color.BLACK)
+        hbmView.visibility = View.INVISIBLE
+
+        // Core Params (The main fingerprint icon)
+        coreLayoutParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_PANEL,
+            0 /* flags set in computeLayoutParams() */,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            title = TAG
+            fitInsetsTypes = 0
+            gravity = android.view.Gravity.TOP or android.view.Gravity.LEFT
+            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+
+            flags = vendorFlags
+
+            privateFlags = WindowManager.LayoutParams.PRIVATE_FLAG_TRUSTED_OVERLAY
+            // Avoid announcing window title.
+            accessibilityTitle = " "
+            screenOrientation = 1 // TODO: Set it to portrait
+
+            inputFeatures = WindowManager.LayoutParams.INPUT_FEATURE_SPY
+        }
+
+        // HBM Params (The high brightness layer)
+        hbmLayoutParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_PANEL,
+            0 /* flags set in computeLayoutParams() */,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            title = "NTFingerprintDimLayer" // TODO: Make it dynamic for non-noth devices
+            fitInsetsTypes = 0
+            alpha = 0.1f
+            gravity = android.view.Gravity.TOP or android.view.Gravity.LEFT
+            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+
+            flags = vendorFlags
+
+            privateFlags = WindowManager.LayoutParams.PRIVATE_FLAG_TRUSTED_OVERLAY
+            // Avoid announcing window title.
+            accessibilityTitle = " "
+
+            inputFeatures = WindowManager.LayoutParams.INPUT_FEATURE_SPY
+        }
+
+        // HBM Full Params
+        hbmLayoutParamsFull = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_PANEL,
+            0 /* flags set in computeLayoutParams() */,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            title = "NTFingerprintDimLayer" // TODO: Make it dynamic for non-noth devices
+            fitInsetsTypes = 0
+            alpha = 0.1f
+            gravity = android.view.Gravity.TOP or android.view.Gravity.LEFT
+            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+
+            flags = vendorFlags
+
+            privateFlags = WindowManager.LayoutParams.PRIVATE_FLAG_TRUSTED_OVERLAY
+            // Avoid announcing window title.
+            accessibilityTitle = " "
+
+            inputFeatures = WindowManager.LayoutParams.INPUT_FEATURE_SPY
+        }
+
+        // Dim Params
+        dimView.setBackgroundColor(Color.TRANSPARENT)
+        dimLayoutParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_PANEL,
+            0 /* flags set in computeLayoutParams() */,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            title = "UdfpsDim"
+            fitInsetsTypes = 0
+            gravity = android.view.Gravity.TOP or android.view.Gravity.LEFT
+            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+
+            flags = vendorFlags
+
+            privateFlags = WindowManager.LayoutParams.PRIVATE_FLAG_TRUSTED_OVERLAY
+            accessibilityTitle = " "
+
+            inputFeatures = WindowManager.LayoutParams.INPUT_FEATURE_SPY
+        }
+    }
 
     /** Show the overlay or return false and do nothing if it is already showing. */
     @SuppressLint("ClickableViewAccessibility")
@@ -230,7 +309,32 @@ constructor(
         addViewRunnable =
             kotlinx.coroutines.Runnable {
                 Trace.setCounter("UdfpsAddView", 1)
-                windowManager.addView(view, coreLayoutParams.updateDimensions(animation))
+
+                val coreParams = coreLayoutParams.updateDimensions(animation)
+                hbmLayoutParams.updateDimensions(animation)
+                hbmLayoutParamsFull.updateDimensions(animation)
+                dimLayoutParams.updateDimensions(animation)
+
+                try {
+                    windowManager.addView(hbmView, hbmLayoutParams)
+                    windowManager.addView(dimView, dimLayoutParams)
+                    isAddDimView = true
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to add vendor HBM/Dim views", e)
+                }
+
+                windowManager.addView(view, coreParams)
+
+                if (requestReason == REASON_ENROLL_FIND_SENSOR || requestReason == REASON_ENROLL_ENROLLING) {
+                    val child = view.findViewById<View>(R.id.udfps_enroll_accessibility_view)
+                    child?.let {
+                        val lp = it.layoutParams
+                        lp.width = sensorBounds.width()
+                        lp.height = sensorBounds.height()
+                        it.layoutParams = lp
+                        it.requestLayout()
+                    }
+                }
             }
         if (powerInteractor.detailedWakefulness.value.isAwake()) {
             // Device is awake, so we add the view immediately.
@@ -261,6 +365,12 @@ constructor(
                 // no need to update any layouts. Instead the correct params will be used when the
                 // view is eventually added.
                 windowManager.updateViewLayout(it, coreLayoutParams.updateDimensions(null))
+
+                if (isAddDimView) {
+                    hbmLayoutParamsFull.updateDimensions(null)
+                    windowManager.updateViewLayout(hbmView, hbmLayoutParams)
+                    windowManager.updateViewLayout(dimView, dimLayoutParams)
+                }
             }
         }
     }
@@ -280,6 +390,17 @@ constructor(
             if (this.parent != null) {
                 windowManager.removeView(this)
             }
+
+            if (isAddDimView) {
+                try {
+                    windowManager.removeView(hbmView)
+                    windowManager.removeView(dimView)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to remove vendor HBM/Dim views", e)
+                }
+                isAddDimView = false
+            }
+
             Trace.setCounter("UdfpsAddView", 0)
             setOnTouchListener(null)
             setOnHoverListener(null)

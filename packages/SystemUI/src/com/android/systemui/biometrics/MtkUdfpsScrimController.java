@@ -28,12 +28,13 @@ import android.view.WindowManager;
  * Logic reversed from Smali: Lcom/android/systemui/biometrics/PriUdfpsScrimController; from LAVA
  */
 public class MtkUdfpsScrimController {
-
     private static MtkUdfpsScrimController mUdfpsScrimController;
 
     // Accessed directly by UdfpsController
     public View mScrimView;
     public WindowManager mWindowManager;
+
+    private Context mContext;
 
     public static MtkUdfpsScrimController getInstance() {
         if (mUdfpsScrimController == null) {
@@ -50,21 +51,15 @@ public class MtkUdfpsScrimController {
      * @return Alpha value (0.0f to 1.0f)
      */
     public static float calculateAlpha(int brightness) {
-        float inverted = (255 - brightness) / 255.0f;
+        String[] alphaArray = mContext.resources.getStringArray(
+            com.android.systemui.res.R.array.config_udfpsDimmingAlphaArray);
+        int alphaIndex = 255 - (brightness - 1);
 
-        float alpha = (inverted * 0.707147f) + 0.23499756f;
+        Log.d("MtkUdfpsScrimController", "Alpha Array Length: " + alphaArray.length);
+        Log.d("MtkUdfpsScrimController", "Requested Brightness Index: " + brightness);
+        Log.d("MtkUdfpsScrimController", "Alpha Value String: " + alphaArray[alphaIndex]);
 
-        // Midpoint bias
-        if (brightness < 128) {
-            alpha -= 0.005f;
-        } else if (brightness > 128) {
-            alpha += 0.005f;
-        }
-
-        // Clamp
-        alpha = Math.max(0.20142648f, Math.min(alpha, 0.9185735f));
-
-        return alpha;
+        return Integer.parseInt(alphaArray[alphaIndex]) / 255.0f;
     }
 
     public int getSystemBrightness(Context context) {
